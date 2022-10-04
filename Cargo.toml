@@ -1,0 +1,51 @@
+[package]
+name = "modality-ctf-plugins"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jon Lamb <jon@auxon.io>"]
+description = "A Modality reflector plugin suite for CTF data"
+license = "Apache-2.0"
+repository = "https://github.com/auxoncorp/modality-ctf-plugins"
+
+[lib]
+name = "modality_ctf"
+path = "src/lib.rs"
+
+[[bin]]
+name = "modality-ctf-import"
+path = "src/bin/importer.rs"
+test = false
+
+[[bin]]
+name = "modality-lttng-live-collector"
+path = "src/bin/lttng_live_collector.rs"
+test = false
+
+[dependencies]
+modality-api = "0.1"
+modality-ingest-client = "0.2"
+modality-ingest-protocol = "0.1"
+modality-reflector-config = "0.2"
+serde = { version = "1.0", features=["derive"] }
+derive_more = "0.99"
+hex = "0.4"
+dirs = "4"
+socket2 = "0.4"
+exitcode = "1"
+clap = { version = "3.2", features = ["env", "color", "derive"] }
+thiserror = "1.0"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "io-util", "net", "signal", "tracing"] }
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = { version = "2.2", features = ["serde"] }
+uuid = { version = "1.1.2", features = ["v5", "v4", "serde"] }
+babeltrace2-sys = { git = "https://github.com/auxoncorp/babeltrace2-sys", branch = "master" }
+ctrlc = { version = "3.2", features=["termination"] }
+
+[dev-dependencies]
+pretty_assertions = "1.2"
+tempfile = "3.1"
+
+[profile.release]
+strip="debuginfo"
