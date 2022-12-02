@@ -1,4 +1,5 @@
-use crate::attrs::{EventAttrKey, EventAttrKeyExt};
+use crate::attrs::EventAttrKey;
+use crate::client::Client;
 use crate::error::Error;
 use babeltrace2_sys::{OwnedEvent, OwnedField, ScalarField};
 use modality_api::{AttrKey, AttrVal, BigInt, Nanoseconds};
@@ -12,22 +13,20 @@ pub struct CtfEvent {
 }
 
 impl CtfEvent {
-    pub async fn new<T: EventAttrKeyExt>(
-        event: &OwnedEvent,
-        client: &mut T,
-    ) -> Result<Self, Error> {
+    pub async fn new(event: &OwnedEvent, client: &mut Client) -> Result<Self, Error> {
         let mut attrs = HashMap::new();
 
         if let Some(n) = event.class_properties.name.as_ref() {
             attrs.insert(
-                client.interned_key(EventAttrKey::Name).await?,
+                client.interned_event_key(EventAttrKey::Name).await?,
                 n.to_owned().into(),
             );
         }
 
         let timestamp_ns: Option<u64> = event.clock_snapshot.and_then(|c: i64| {
                 if c < 0 {
-                        warn!("Dropping Event ID {} clock snapshot because it's negative, consider adjusting the origin epoch offset input parameter", event.class_properties.id);
+                    warn!("Dropping Event ID {} clock snapshot because it's negative, consider adjusting the origin epoch offset input parameter",
+                          event.class_properties.id);
                     None
                 } else {
                     Some(c as u64)
@@ -35,26 +34,28 @@ impl CtfEvent {
             });
         if let Some(ts) = timestamp_ns {
             attrs.insert(
-                client.interned_key(EventAttrKey::Timestamp).await?,
+                client.interned_event_key(EventAttrKey::Timestamp).await?,
                 Nanoseconds::from(ts).into(),
             );
             attrs.insert(
-                client.interned_key(EventAttrKey::ClockSnapshot).await?,
+                client
+                    .interned_event_key(EventAttrKey::ClockSnapshot)
+                    .await?,
                 Nanoseconds::from(ts).into(),
             );
         }
 
         attrs.insert(
-            client.interned_key(EventAttrKey::StreamId).await?,
+            client.interned_event_key(EventAttrKey::StreamId).await?,
             BigInt::new_attr_val(event.stream_id.into()),
         );
         attrs.insert(
-            client.interned_key(EventAttrKey::Id).await?,
+            client.interned_event_key(EventAttrKey::Id).await?,
             BigInt::new_attr_val(event.class_properties.id.into()),
         );
         if let Some(ll) = event.class_properties.log_level {
             attrs.insert(
-                client.interned_key(EventAttrKey::LogLevel).await?,
+                client.interned_event_key(EventAttrKey::LogLevel).await?,
                 format!("{:?}", ll).to_lowercase().into(),
             );
         }
@@ -70,7 +71,7 @@ impl CtfEvent {
         for (k, v) in common_context.into_iter() {
             attrs.insert(
                 client
-                    .interned_key(EventAttrKey::CommonContext(k.into()))
+                    .interned_event_key(EventAttrKey::CommonContext(k.into()))
                     .await?,
                 v,
             );
@@ -86,7 +87,7 @@ impl CtfEvent {
         for (k, v) in specific_context.into_iter() {
             attrs.insert(
                 client
-                    .interned_key(EventAttrKey::SpecificContext(k.into()))
+                    .interned_event_key(EventAttrKey::SpecificContext(k.into()))
                     .await?,
                 v,
             );
@@ -102,7 +103,7 @@ impl CtfEvent {
         for (k, v) in packet_context.into_iter() {
             attrs.insert(
                 client
-                    .interned_key(EventAttrKey::PacketContext(k.into()))
+                    .interned_event_key(EventAttrKey::PacketContext(k.into()))
                     .await?,
                 v,
             );
@@ -116,7 +117,12 @@ impl CtfEvent {
             .transpose()?
             .unwrap_or_default();
         for (k, v) in event_fields.into_iter() {
-            attrs.insert(client.interned_key(EventAttrKey::Field(k.into())).await?, v);
+            attrs.insert(
+                client
+                    .interned_event_key(EventAttrKey::Field(k.into()))
+                    .await?,
+                v,
+            );
         }
 
         Ok(Self { attrs })

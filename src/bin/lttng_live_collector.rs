@@ -4,6 +4,7 @@ use babeltrace2_sys::{CtfPluginSourceLttnLiveInitParams, CtfStream, RunStatus};
 use clap::Parser;
 use modality_api::types::TimelineId;
 use modality_ctf::{
+    config::AttrKeyRename,
     prelude::*,
     tracing::try_init_tracing_subscriber,
     types::{RetryDurationUs, SessionNotFoundAction},
@@ -42,6 +43,14 @@ pub struct Opts {
     #[clap(long, verbatim_doc_comment, name = "action")]
     pub session_not_found_action: Option<SessionNotFoundAction>,
 
+    /// Rename a timeline attribute key as it is being imported. Specify as 'original_key,new_key'
+    #[clap(long, name = "original,new", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
+    pub rename_timeline_attr: Vec<AttrKeyRename>,
+
+    /// Rename an event attribute key as it is being imported. Specify as 'original_key,new_key'
+    #[clap(long, name = "original,new", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
+    pub rename_event_attr: Vec<AttrKeyRename>,
+
     /// The URL to connect to the LTTng relay daemon.
     ///
     /// Format: net\[4\]://RDHOST\[:RDPORT\]/host/TGTHOST/SESSION
@@ -58,6 +67,17 @@ pub struct Opts {
     /// Example: net://localhost/host/ubuntu-focal/my-kernel-session
     #[clap(verbatim_doc_comment, name = "url")]
     pub url: Option<Url>,
+}
+
+fn parse_attr_key_rename(
+    s: &str,
+) -> Result<AttrKeyRename, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let pos = s
+        .find(',')
+        .ok_or_else(|| format!("invalid original,new: no `,` found in `{}`", s))?;
+    let original = s[..pos].parse()?;
+    let new = s[pos + 1..].parse()?;
+    Ok(AttrKeyRename { original, new })
 }
 
 #[derive(Debug, Error)]
@@ -117,6 +137,12 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(url) = opts.url {
         cfg.plugin.lttng_live.url = url.into();
     }
+
+    let mut rename_timeline_attrs = opts.rename_timeline_attr.clone();
+    rename_timeline_attrs.extend(cfg.plugin.rename_timeline_attrs.clone());
+
+    let mut rename_event_attrs = opts.rename_event_attr.clone();
+    rename_event_attrs.extend(cfg.plugin.rename_event_attrs.clone());
 
     let url = match cfg.plugin.lttng_live.url.as_ref() {
         Some(url) => url.clone(),
@@ -184,7 +210,7 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
     let c =
         IngestClient::connect(&cfg.protocol_parent_url()?, cfg.ingest.allow_insecure_tls).await?;
     let c_authed = c.authenticate(cfg.resolve_auth()?.into()).await?;
-    let mut client = Client::new(c_authed);
+    let mut client = Client::new(c_authed, rename_timeline_attrs, rename_event_attrs);
 
     let props = CtfProperties::new(
         cfg.plugin.run_id,

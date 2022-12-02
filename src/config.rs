@@ -33,10 +33,27 @@ pub struct PluginConfig {
     /// Logging level for libbabeltrace
     pub log_level: LoggingLevel,
 
+    /// Rename a timeline attribute key as it is being imported
+    pub rename_timeline_attrs: Vec<AttrKeyRename>,
+
+    /// Rename an event attribute key as it is being imported
+    pub rename_event_attrs: Vec<AttrKeyRename>,
+
     #[serde(flatten)]
     pub import: ImportConfig,
+
     #[serde(flatten)]
     pub lttng_live: LttngLiveConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct AttrKeyRename {
+    /// The attr key to rename
+    pub original: String,
+
+    /// The new attr key name to use
+    pub new: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, Deserialize)]
@@ -103,6 +120,8 @@ impl CtfConfig {
             log_level: bt_opts.log_level.unwrap_or(plugin_cfg.log_level),
             import: plugin_cfg.import,
             lttng_live: plugin_cfg.lttng_live,
+            rename_timeline_attrs: plugin_cfg.rename_timeline_attrs,
+            rename_event_attrs: plugin_cfg.rename_event_attrs,
         };
 
         Ok(Self {

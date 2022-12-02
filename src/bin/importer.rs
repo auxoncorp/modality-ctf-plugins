@@ -3,6 +3,7 @@
 use babeltrace2_sys::{CtfIterator, CtfPluginSourceFsInitParams};
 use clap::Parser;
 use modality_api::types::TimelineId;
+use modality_ctf::config::AttrKeyRename;
 use modality_ctf::{prelude::*, tracing::try_init_tracing_subscriber};
 use modality_ingest_client::IngestClient;
 use std::collections::HashMap;
@@ -37,9 +38,28 @@ pub struct Opts {
     #[clap(long, name = "unix-epoch", help_heading = "IMPORT CONFIGURATION")]
     pub force_clock_class_origin_unix_epoch: Option<bool>,
 
+    /// Rename a timeline attribute key as it is being imported. Specify as 'original_key,new_key'
+    #[clap(long, name = "original.tl.attr,new.tl.attr", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
+    pub rename_timeline_attr: Vec<AttrKeyRename>,
+
+    /// Rename an event attribute key as it is being imported. Specify as 'original_key,new_key'
+    #[clap(long, name = "original.event.attr,new.event.attr", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
+    pub rename_event_attr: Vec<AttrKeyRename>,
+
     /// Path to trace directories
     #[clap(name = "input", help_heading = "IMPORT CONFIGURATION")]
     pub inputs: Vec<PathBuf>,
+}
+
+fn parse_attr_key_rename(
+    s: &str,
+) -> Result<AttrKeyRename, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let pos = s
+        .find(',')
+        .ok_or_else(|| format!("invalid original,new: no `,` found in `{}`", s))?;
+    let original = s[..pos].parse()?;
+    let new = s[pos + 1..].parse()?;
+    Ok(AttrKeyRename { original, new })
 }
 
 #[derive(Debug, Error)]
@@ -100,6 +120,12 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
         cfg.plugin.import.inputs = opts.inputs;
     }
 
+    let mut rename_timeline_attrs = opts.rename_timeline_attr.clone();
+    rename_timeline_attrs.extend(cfg.plugin.rename_timeline_attrs.clone());
+
+    let mut rename_event_attrs = opts.rename_event_attr.clone();
+    rename_event_attrs.extend(cfg.plugin.rename_event_attrs.clone());
+
     if cfg.plugin.import.inputs.is_empty() {
         return Err(Error::MissingInputs.into());
     }
@@ -115,7 +141,7 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
     let c =
         IngestClient::connect(&cfg.protocol_parent_url()?, cfg.ingest.allow_insecure_tls).await?;
     let c_authed = c.authenticate(cfg.resolve_auth()?.into()).await?;
-    let mut client = Client::new(c_authed);
+    let mut client = Client::new(c_authed, rename_timeline_attrs, rename_event_attrs);
 
     let ctf_params = CtfPluginSourceFsInitParams::try_from(&cfg.plugin.import)?;
     let trace_iter = CtfIterator::new(cfg.plugin.log_level.into(), &ctf_params)?;
