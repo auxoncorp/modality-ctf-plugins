@@ -1,4 +1,5 @@
-use crate::attrs::{TimelineAttrKey, TimelineAttrKeyExt, TIMELINE_INGEST_SOURCE_VAL};
+use crate::attrs::{TimelineAttrKey, TIMELINE_INGEST_SOURCE_VAL};
+use crate::client::Client;
 use crate::error::Error;
 use babeltrace2_sys::StreamProperties;
 use modality_api::{AttrVal, BigInt, TimelineId};
@@ -14,10 +15,10 @@ pub struct CtfStreamProperties {
 }
 
 impl CtfStreamProperties {
-    pub async fn new<T: TimelineAttrKeyExt>(
+    pub async fn new(
         trace_uuid: &Uuid,
         s: &StreamProperties,
-        client: &mut T,
+        client: &mut Client,
     ) -> Result<Self, Error> {
         let mut attrs = HashMap::default();
         let timeline_id = TimelineId::from(Uuid::new_v5(trace_uuid, &s.id.to_le_bytes()));
@@ -43,63 +44,71 @@ impl CtfStreamProperties {
             .unwrap_or_else(|| format!("stream{}", s.id));
 
         attrs.insert(
-            client.interned_key(TimelineAttrKey::Description).await?,
+            client
+                .interned_timeline_key(TimelineAttrKey::Description)
+                .await?,
             format!("CTF stream '{stream_name}'").into(),
         );
         attrs.insert(
-            client.interned_key(TimelineAttrKey::Name).await?,
+            client.interned_timeline_key(TimelineAttrKey::Name).await?,
             stream_name.clone().into(),
         );
 
         attrs.insert(
-            client.interned_key(TimelineAttrKey::StreamName).await?,
+            client
+                .interned_timeline_key(TimelineAttrKey::StreamName)
+                .await?,
             stream_name.into(),
         );
         attrs.insert(
-            client.interned_key(TimelineAttrKey::StreamId).await?,
+            client
+                .interned_timeline_key(TimelineAttrKey::StreamId)
+                .await?,
             BigInt::new_attr_val(s.id.into()),
         );
 
         attrs.insert(
-            client.interned_key(TimelineAttrKey::IngestSource).await?,
+            client
+                .interned_timeline_key(TimelineAttrKey::IngestSource)
+                .await?,
             TIMELINE_INGEST_SOURCE_VAL.into(),
         );
 
         if let Some(c) = &s.clock {
             attrs.insert(
                 client
-                    .interned_key(TimelineAttrKey::StreamClockFreq)
+                    .interned_timeline_key(TimelineAttrKey::StreamClockFreq)
                     .await?,
                 BigInt::new_attr_val(c.frequency.into()),
             );
             attrs.insert(
                 client
-                    .interned_key(TimelineAttrKey::StreamClockOffsetSeconds)
+                    .interned_timeline_key(TimelineAttrKey::StreamClockOffsetSeconds)
                     .await?,
                 c.offset_seconds.into(),
             );
             attrs.insert(
                 client
-                    .interned_key(TimelineAttrKey::StreamClockOffsetCycles)
+                    .interned_timeline_key(TimelineAttrKey::StreamClockOffsetCycles)
                     .await?,
                 BigInt::new_attr_val(c.offset_cycles.into()),
             );
             attrs.insert(
                 client
-                    .interned_key(TimelineAttrKey::StreamClockPrecision)
+                    .interned_timeline_key(TimelineAttrKey::StreamClockPrecision)
                     .await?,
                 BigInt::new_attr_val(c.precision.into()),
             );
             attrs.insert(
                 client
-                    .interned_key(TimelineAttrKey::StreamClockUnixEpoch)
+                    .interned_timeline_key(TimelineAttrKey::StreamClockUnixEpoch)
                     .await?,
                 c.unix_epoch_origin.into(),
             );
             if let Some(cn) = &c.name {
                 attrs.insert(
                     client
-                        .interned_key(TimelineAttrKey::StreamClockName)
+                        .interned_timeline_key(TimelineAttrKey::StreamClockName)
                         .await?,
                     cn.to_owned().into(),
                 );
@@ -107,7 +116,7 @@ impl CtfStreamProperties {
             if let Some(cd) = &c.description {
                 attrs.insert(
                     client
-                        .interned_key(TimelineAttrKey::StreamClockDesc)
+                        .interned_timeline_key(TimelineAttrKey::StreamClockDesc)
                         .await?,
                     cd.to_owned().into(),
                 );
@@ -115,12 +124,14 @@ impl CtfStreamProperties {
             if let Some(cid) = &c.uuid {
                 attrs.insert(
                     client
-                        .interned_key(TimelineAttrKey::StreamClockUuid)
+                        .interned_timeline_key(TimelineAttrKey::StreamClockUuid)
                         .await?,
                     cid.to_string().into(),
                 );
                 attrs.insert(
-                    client.interned_key(TimelineAttrKey::TimeDomain).await?,
+                    client
+                        .interned_timeline_key(TimelineAttrKey::TimeDomain)
+                        .await?,
                     cid.to_string().into(),
                 );
             }

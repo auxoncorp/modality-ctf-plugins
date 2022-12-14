@@ -1,4 +1,4 @@
-use crate::attrs::TimelineAttrKeyExt;
+use crate::client::Client;
 use crate::error::Error;
 use babeltrace2_sys::{StreamId, StreamProperties, TraceProperties};
 use modality_api::{AttrVal, TimelineId};
@@ -19,12 +19,12 @@ pub struct CtfProperties {
 }
 
 impl CtfProperties {
-    pub async fn new<T: TimelineAttrKeyExt>(
+    pub async fn new(
         run_id: Option<Uuid>,
         trace_uuid_override: Option<Uuid>,
         t: &TraceProperties,
         s: &BTreeSet<StreamProperties>,
-        client: &mut T,
+        client: &mut Client,
     ) -> Result<Self, Error> {
         // TimelineIds are a composite of the trace UUID and the stream ID
         // Use the override if present, otherwise use the trace's UUID
