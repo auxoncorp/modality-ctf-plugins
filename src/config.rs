@@ -269,6 +269,8 @@ url = 'net://localhost/host/ubuntu-focal/my-kernel-session'
                         .unwrap()
                         .into(),
                     log_level: babeltrace2_sys::LoggingLevel::Info.into(),
+                    rename_timeline_attrs: Default::default(),
+                    rename_event_attrs: Default::default(),
                     import: ImportConfig {
                         trace_name: "my-trace".to_owned().into(),
                         clock_class_offset_ns: Some(-1_i64),
@@ -338,6 +340,8 @@ url = 'net://localhost/host/ubuntu-focal/my-kernel-session'
                         .into(),
                     log_level: babeltrace2_sys::LoggingLevel::Debug.into(),
                     import: Default::default(),
+                    rename_timeline_attrs: Default::default(),
+                    rename_event_attrs: Default::default(),
                     lttng_live: LttngLiveConfig {
                         retry_duration_us: 100.into(),
                         session_not_found_action: babeltrace2_sys::SessionNotFoundAction::End
