@@ -13,7 +13,7 @@
 //! * timeline.internal.ctf.trace.name
 //! * timeline.internal.ctf.trace.uuid
 //! * timeline.internal.ctf.trace.stream_count
-//! * timeline.internal.ctf.trace.env.<fields>
+//! * timeline.internal.ctf.trace.env.`<fields>`
 //!
 //! Stream Attrs
 //! * timeline.internal.ctf.stream.id

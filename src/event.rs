@@ -56,7 +56,7 @@ impl CtfEvent {
         if let Some(ll) = event.class_properties.log_level {
             attrs.insert(
                 client.interned_event_key(EventAttrKey::LogLevel).await?,
-                format!("{:?}", ll).to_lowercase().into(),
+                format!("{ll:?}").to_lowercase().into(),
             );
         }
 
@@ -308,7 +308,7 @@ fn enum_label_attr(key_prefix: &str, labels: &BTreeSet<String>) -> Option<(AttrK
     if labels.len() == 1 {
         labels.iter().next().map(|l| {
             (
-                AttrKey::new(format!("{}.label", key_prefix)),
+                AttrKey::new(format!("{key_prefix}.label")),
                 l.to_owned().into(),
             )
         })

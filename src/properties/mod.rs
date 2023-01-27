@@ -49,7 +49,7 @@ impl CtfProperties {
         &self,
     ) -> Box<dyn Iterator<Item = (TimelineId, Vec<(InternedAttrKey, AttrVal)>)> + '_> {
         let trace_attr_kvs = self.trace.attr_kvs();
-        Box::new(self.streams.iter().map(move |(_sid, p)| {
+        Box::new(self.streams.values().map(move |p| {
             let mut attr_kvs = p.attr_kvs();
             attr_kvs.extend_from_slice(&trace_attr_kvs);
             (p.timeline_id(), attr_kvs)

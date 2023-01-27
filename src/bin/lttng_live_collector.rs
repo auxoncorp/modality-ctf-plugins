@@ -74,7 +74,7 @@ fn parse_attr_key_rename(
 ) -> Result<AttrKeyRename, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let pos = s
         .find(',')
-        .ok_or_else(|| format!("invalid original,new: no `,` found in `{}`", s))?;
+        .ok_or_else(|| format!("invalid original,new: no `,` found in `{s}`"))?;
     let original = s[..pos].parse()?;
     let new = s[pos + 1..].parse()?;
     Ok(AttrKeyRename { original, new })
@@ -100,7 +100,7 @@ async fn main() {
     match do_main().await {
         Ok(()) => (),
         Err(e) => {
-            eprintln!("{}", e);
+            eprintln!("{e}");
             let mut cause = e.source();
             while let Some(err) = cause {
                 eprintln!("Caused by: {err}");
