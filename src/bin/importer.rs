@@ -160,9 +160,58 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
         warn!("The CTF containing input path(s) don't contain any trace data");
     }
 
+    let mut additional_timeline_attributes = Vec::with_capacity(
+        cfg.ingest
+            .timeline_attributes
+            .additional_timeline_attributes
+            .len(),
+    );
+    for kv in cfg
+        .ingest
+        .timeline_attributes
+        .additional_timeline_attributes
+        .iter()
+    {
+        additional_timeline_attributes.push((
+            client
+                .interned_timeline_key(TimelineAttrKey::Custom(kv.0.to_string()))
+                .await?,
+            kv.1.clone(),
+        ));
+    }
+
+    let mut override_timeline_attributes = Vec::with_capacity(
+        cfg.ingest
+            .timeline_attributes
+            .override_timeline_attributes
+            .len(),
+    );
+    for kv in cfg
+        .ingest
+        .timeline_attributes
+        .override_timeline_attributes
+        .iter()
+    {
+        override_timeline_attributes.push((
+            client
+                .interned_timeline_key(TimelineAttrKey::Custom(kv.0.to_string()))
+                .await?,
+            kv.1.clone(),
+        ));
+    }
+
     for (tid, attr_kvs) in props.timelines() {
+        let mut attrs = HashMap::new();
+        for (k, v) in attr_kvs
+            .into_iter()
+            .chain(additional_timeline_attributes.clone().into_iter())
+            .chain(override_timeline_attributes.clone().into_iter())
+        {
+            attrs.insert(k, v);
+        }
+
         client.c.open_timeline(tid).await?;
-        client.c.timeline_metadata(attr_kvs).await?;
+        client.c.timeline_metadata(attrs).await?;
         last_timeline_ordering_val.insert(tid, 0);
     }
 

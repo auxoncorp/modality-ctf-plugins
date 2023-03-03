@@ -50,6 +50,9 @@ pub enum TimelineAttrKey {
     StreamClockDesc,
     #[display(fmt = "timeline.internal.ctf.stream.clock.uuid")]
     StreamClockUuid,
+
+    #[display(fmt = "timeline.{_0}")]
+    Custom(String),
 }
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Display)]
