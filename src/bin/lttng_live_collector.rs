@@ -149,29 +149,51 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
         None => return Err(Error::MissingUrl.into()),
     };
 
+    let retry_duration = Duration::from_micros(cfg.plugin.lttng_live.retry_duration_us.into());
+
     // Attempt to inform user if we can't connect to remote to provide
     // some help when babeltrace2 can't connect, since its error is just -1
     // and you'd have to turn on logging to really know
-    if let Ok(relayd_addrs) = url.socket_addrs(|| Some(LTTNG_RELAYD_DEFAULT_PORT)) {
-        if !relayd_addrs.is_empty() {
-            let addr = relayd_addrs[0];
-            let domain = if addr.is_ipv4() {
-                Domain::IPV4
-            } else {
-                Domain::IPV6
-            };
-            let sock = Socket::new(domain, Type::STREAM, None)?;
+    //
+    // If session-no-found-action == Continue, then do this indefinately to keep
+    // babeltrace2 from erroring out early in cases where the plugin is started
+    // before relayd is started.
+    'conn_loop: loop {
+        if let Ok(relayd_addrs) = url.socket_addrs(|| Some(LTTNG_RELAYD_DEFAULT_PORT)) {
+            if !relayd_addrs.is_empty() {
+                let addr = relayd_addrs[0];
+                let domain = if addr.is_ipv4() {
+                    Domain::IPV4
+                } else {
+                    Domain::IPV6
+                };
+                let sock = Socket::new(domain, Type::STREAM, None)?;
 
-            if sock
-                .connect_timeout(&addr.into(), RELAYD_QUICK_PING_CONNECT_TIMEOUT)
-                .is_err()
-            {
-                warn!(
-                    "Failed to connect to '{}', the remote host may not be reachable",
-                    url
-                );
+                let connected_to_remote = sock
+                    .connect_timeout(&addr.into(), RELAYD_QUICK_PING_CONNECT_TIMEOUT)
+                    .is_ok();
+                let _ = sock.shutdown(net::Shutdown::Both).ok();
+
+                if connected_to_remote {
+                    // Host is up
+                    break 'conn_loop;
+                } else {
+                    warn!(
+                        "Failed to connect to '{}', the remote host may not be reachable",
+                        url
+                    );
+                }
+                if cfg.plugin.lttng_live.session_not_found_action.0
+                    != babeltrace2_sys::SessionNotFoundAction::Continue
+                {
+                    break 'conn_loop;
+                } else {
+                    // Keep trying
+                    thread::sleep(retry_duration);
+                }
             }
-            let _ = sock.shutdown(net::Shutdown::Both).ok();
+        } else {
+            break 'conn_loop;
         }
     }
 
@@ -181,7 +203,6 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
         Some(cfg.plugin.lttng_live.session_not_found_action.into()),
     )?;
     let mut ctf_stream = CtfStream::new(cfg.plugin.log_level.into(), &params)?;
-    let retry_duration = Duration::from_micros(cfg.plugin.lttng_live.retry_duration_us.into());
 
     debug!("Waiting for CTF metadata");
 
@@ -223,9 +244,58 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut last_timeline_ordering_val: HashMap<TimelineId, u128> = Default::default();
 
+    let mut additional_timeline_attributes = Vec::with_capacity(
+        cfg.ingest
+            .timeline_attributes
+            .additional_timeline_attributes
+            .len(),
+    );
+    for kv in cfg
+        .ingest
+        .timeline_attributes
+        .additional_timeline_attributes
+        .iter()
+    {
+        additional_timeline_attributes.push((
+            client
+                .interned_timeline_key(TimelineAttrKey::Custom(kv.0.to_string()))
+                .await?,
+            kv.1.clone(),
+        ));
+    }
+
+    let mut override_timeline_attributes = Vec::with_capacity(
+        cfg.ingest
+            .timeline_attributes
+            .override_timeline_attributes
+            .len(),
+    );
+    for kv in cfg
+        .ingest
+        .timeline_attributes
+        .override_timeline_attributes
+        .iter()
+    {
+        override_timeline_attributes.push((
+            client
+                .interned_timeline_key(TimelineAttrKey::Custom(kv.0.to_string()))
+                .await?,
+            kv.1.clone(),
+        ));
+    }
+
     for (tid, attr_kvs) in props.timelines() {
+        let mut attrs = HashMap::new();
+        for (k, v) in attr_kvs
+            .into_iter()
+            .chain(additional_timeline_attributes.clone().into_iter())
+            .chain(override_timeline_attributes.clone().into_iter())
+        {
+            attrs.insert(k, v);
+        }
+
         client.c.open_timeline(tid).await?;
-        client.c.timeline_metadata(attr_kvs).await?;
+        client.c.timeline_metadata(attrs).await?;
         last_timeline_ordering_val.insert(tid, 0);
     }
 

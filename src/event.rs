@@ -2,10 +2,11 @@ use crate::attrs::EventAttrKey;
 use crate::client::Client;
 use crate::error::Error;
 use babeltrace2_sys::{OwnedEvent, OwnedField, ScalarField};
-use modality_api::{AttrKey, AttrVal, BigInt, Nanoseconds};
+use modality_api::{AttrKey, AttrVal, BigInt, LogicalTime, Nanoseconds};
 use modality_ingest_protocol::InternedAttrKey;
 use std::collections::{BTreeSet, HashMap};
 use tracing::warn;
+use uuid::Uuid;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct CtfEvent {
@@ -65,7 +66,7 @@ impl CtfEvent {
             .properties
             .common_context
             .as_ref()
-            .map(|f| field_to_attr(EMPTY_PREFIX, f))
+            .map(|f| field_to_attr(false, EMPTY_PREFIX, f))
             .transpose()?
             .unwrap_or_default();
         for (k, v) in common_context.into_iter() {
@@ -81,7 +82,7 @@ impl CtfEvent {
             .properties
             .specific_context
             .as_ref()
-            .map(|f| field_to_attr(EMPTY_PREFIX, f))
+            .map(|f| field_to_attr(false, EMPTY_PREFIX, f))
             .transpose()?
             .unwrap_or_default();
         for (k, v) in specific_context.into_iter() {
@@ -97,7 +98,7 @@ impl CtfEvent {
             .properties
             .packet_context
             .as_ref()
-            .map(|f| field_to_attr(EMPTY_PREFIX, f))
+            .map(|f| field_to_attr(false, EMPTY_PREFIX, f))
             .transpose()?
             .unwrap_or_default();
         for (k, v) in packet_context.into_iter() {
@@ -113,7 +114,7 @@ impl CtfEvent {
             .properties
             .payload
             .as_ref()
-            .map(|f| field_to_attr(EMPTY_PREFIX, f))
+            .map(|f| field_to_attr(true, EMPTY_PREFIX, f))
             .transpose()?
             .unwrap_or_default();
         for (k, v) in event_fields.into_iter() {
@@ -134,8 +135,13 @@ impl CtfEvent {
 }
 
 /// Yields a map of <'<prefix>.<possibly.nested.key>', AttrVal>
-fn field_to_attr(prefix: &str, f: &OwnedField) -> Result<HashMap<AttrKey, AttrVal>, Error> {
-    let gen = FieldToAttrKeysGen::new(prefix)?;
+fn field_to_attr(
+    auto_map_interaction_fields: bool,
+    prefix: &str,
+    f: &OwnedField,
+) -> Result<HashMap<AttrKey, AttrVal>, Error> {
+    let gen = FieldToAttrKeysGen::new(prefix)?
+        .with_auto_map_interaction_fields(auto_map_interaction_fields);
     Ok(gen.generate(f))
 }
 
@@ -158,6 +164,12 @@ struct FieldToAttrKeysGen {
 
     root_struct_observed: bool,
 
+    // Whether or not to auto map root-level interaction fields to be
+    // an artificial '.interaction.' structure.
+    // These elevates the producer from having to nest an interaction struct in their data
+    // which is impossible in some cases/implementations
+    auto_map_interaction_fields: bool,
+
     attrs: HashMap<AttrKey, AttrVal>,
 }
 
@@ -172,9 +184,15 @@ impl FieldToAttrKeysGen {
                 anonymous_field_idices_per_nesting_depth: vec![0],
                 attr_key_stack: vec![key_prefix.to_string()],
                 root_struct_observed: false,
+                auto_map_interaction_fields: false,
                 attrs: Default::default(),
             })
         }
+    }
+
+    fn with_auto_map_interaction_fields(mut self, auto_map_interaction_fields: bool) -> Self {
+        self.auto_map_interaction_fields = auto_map_interaction_fields;
+        self
     }
 
     /// Destructure the contents of `root_field`
@@ -227,7 +245,63 @@ impl FieldToAttrKeysGen {
                 .unwrap_or_else(|| {
                     ScalarFieldAttrKeyVal::Single((AttrKey::new(k.clone()), scalar_field_to_val(s)))
                 }),
-            _ => ScalarFieldAttrKeyVal::Single((AttrKey::new(k), scalar_field_to_val(s))),
+            _ => {
+                if self.auto_map_interaction_fields {
+                    if InteractionRemoteAttrKey::TimelineId.matches_key(&k) {
+                        if let ScalarField::String(tid) = s {
+                            match tid.parse::<Uuid>() {
+                                Ok(tid) => {
+                                    return
+                                        ScalarFieldAttrKeyVal::Single((AttrKey::new(
+                                                    InteractionRemoteAttrKey::TimelineId.to_interaction_remote_key()
+                                                    .to_string()), AttrVal::TimelineId(Box::new(tid.into()))))
+                                }
+                                Err(e) => warn!("Failed to auto map interaction field as timeline ID UUID type. {e}"),
+                            }
+                        } else {
+                            warn!("Mapping interaction remote timeline ID requires a string type");
+                        }
+                    } else if InteractionRemoteAttrKey::LogicalTime.matches_key(&k) {
+                        if let ScalarField::String(t) = s {
+                            match t.parse::<LogicalTime>() {
+                                Ok(t) => {
+                                    return
+                                        ScalarFieldAttrKeyVal::Single((AttrKey::new(
+                                                    InteractionRemoteAttrKey::LogicalTime.to_interaction_remote_key()
+                                                    .to_string()), AttrVal::LogicalTime(t)))
+                                }
+                                Err(e) => warn!("Failed to auto map interaction field as timeline ID UUID type. {e:?}"),
+                            }
+                        } else {
+                            warn!("Mapping interaction remote logical time requires a string type");
+                        }
+                    } else if InteractionRemoteAttrKey::Timestamp.matches_key(&k) {
+                        if let ScalarField::UnsignedInteger(t) = s {
+                            return ScalarFieldAttrKeyVal::Single((
+                                AttrKey::new(
+                                    InteractionRemoteAttrKey::Timestamp
+                                        .to_interaction_remote_key()
+                                        .to_string(),
+                                ),
+                                AttrVal::Timestamp((*t).into()),
+                            ));
+                        } else {
+                            warn!("Mapping interaction remote timestamp requires a u64 type");
+                        }
+                    } else if InteractionRemoteAttrKey::Nonce.matches_key(&k) {
+                        return ScalarFieldAttrKeyVal::Single((
+                            AttrKey::new(
+                                InteractionRemoteAttrKey::Nonce
+                                    .to_interaction_remote_key()
+                                    .to_string(),
+                            ),
+                            scalar_field_to_val(s),
+                        ));
+                    }
+                }
+
+                ScalarFieldAttrKeyVal::Single((AttrKey::new(k), scalar_field_to_val(s)))
+            }
         }
     }
 
@@ -330,6 +404,40 @@ fn scalar_field_to_val(s: &ScalarField) -> AttrVal {
     }
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
+enum InteractionRemoteAttrKey {
+    TimelineId,
+    LogicalTime,
+    Timestamp,
+    Nonce,
+}
+
+impl InteractionRemoteAttrKey {
+    fn matches_key(self, k: &str) -> bool {
+        !k.contains(self.to_interaction_remote_key()) && k.contains(self.to_remote_key())
+    }
+
+    fn to_remote_key(self) -> &'static str {
+        use InteractionRemoteAttrKey::*;
+        match self {
+            TimelineId => "remote_timeline_id",
+            LogicalTime => "remote_logical_time",
+            Timestamp => "remote_timestamp",
+            Nonce => "remote_nonce",
+        }
+    }
+
+    fn to_interaction_remote_key(self) -> &'static str {
+        use InteractionRemoteAttrKey::*;
+        match self {
+            TimelineId => "interaction.remote_timeline_id",
+            LogicalTime => "interaction.remote_logical_time",
+            Timestamp => "interaction.remote_timestamp",
+            Nonce => "interaction.remote_nonce",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,6 +489,11 @@ mod tests {
                 ),
                 Scalar("l0_f2".to_string().into(), SignedInteger(-2)),
                 Scalar(None, Bool(false)),
+                Scalar(
+                    "remote_timeline_id".to_string().into(),
+                    String("d1118896-314e-45f0-ae50-18a38786d957".to_string()),
+                ),
+                Scalar("remote_nonce".to_string().into(), UnsignedInteger(8)),
             ],
         )
     }
@@ -388,12 +501,27 @@ mod tests {
     #[test]
     fn attr_key_gen_mixed_nested_structs() {
         let root = messy_event_structure();
-        let gen = FieldToAttrKeysGen::new("some.prefix").unwrap();
+        let gen = FieldToAttrKeysGen::new("some.prefix")
+            .unwrap()
+            .with_auto_map_interaction_fields(true);
         let mut attrs = gen.generate(&root).into_iter().collect::<Vec<(_, _)>>();
         attrs.sort_by(|a, b| a.0.as_ref().cmp(b.0.as_ref()));
         assert_eq!(
             attrs,
             vec![
+                (
+                    AttrKey::new("interaction.remote_nonce".to_owned()),
+                    BigInt::new_attr_val(8)
+                ),
+                (
+                    AttrKey::new("interaction.remote_timeline_id".to_owned()),
+                    AttrVal::TimelineId(Box::new(
+                        "d1118896-314e-45f0-ae50-18a38786d957"
+                            .parse::<Uuid>()
+                            .unwrap()
+                            .into()
+                    )),
+                ),
                 (
                     AttrKey::new("some.prefix.anonymous_0".to_owned()),
                     BigInt::new_attr_val(0)
