@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
 
+const CLOCK_STYLE_RELATIVE: &str = "relative";
+const CLOCK_STYLE_UTC: &str = "utc";
+
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub struct CtfStreamProperties {
     timeline_id: TimelineId,
@@ -135,6 +138,17 @@ impl CtfStreamProperties {
                     cid.to_string().into(),
                 );
             }
+            attrs.insert(
+                client
+                    .interned_timeline_key(TimelineAttrKey::ClockStyle)
+                    .await?,
+                String::from(if c.unix_epoch_origin {
+                    CLOCK_STYLE_UTC
+                } else {
+                    CLOCK_STYLE_RELATIVE
+                })
+                .into(),
+            );
         }
 
         Ok(Self { timeline_id, attrs })

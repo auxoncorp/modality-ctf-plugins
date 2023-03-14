@@ -18,6 +18,8 @@ pub enum TimelineAttrKey {
     RunId,
     #[display(fmt = "timeline.time_domain")]
     TimeDomain,
+    #[display(fmt = "timeline.clock_style")]
+    ClockStyle,
     #[display(fmt = "timeline.ingest_source")]
     IngestSource,
 
