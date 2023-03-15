@@ -29,6 +29,7 @@
 //! * timeline.internal.ctf.stream.clock.uuid
 //!   - timeline.time_domain
 //! * timeline.ingest_source
+//! * timeline.clock_style
 //!
 //! Event Attrs
 //! * event.internal.ctf.stream_id
