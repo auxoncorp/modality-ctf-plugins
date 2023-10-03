@@ -32,7 +32,7 @@ hex = "0.4"
 dirs = "4"
 socket2 = "0.4"
 exitcode = "1"
-clap = { version = "3.2", features = ["env", "color", "derive"] }
+clap = { version = "4.4", features = ["env", "color", "derive"] }
 thiserror = "1.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "io-util", "net", "signal", "tracing"] }
 async-trait = "0.1"
