@@ -63,4 +63,12 @@ pub struct BabeltraceOpts {
     /// Logging level for libbabeltrace
     #[clap(long, name = "log-level", help_heading = "BABELTRACE CONFIGURATION")]
     pub log_level: Option<LoggingLevel>,
+
+    /// Merge all streams into the stream with the given ID, producing a single timeline.
+    #[clap(
+        long,
+        name = "merge-stream-id",
+        help_heading = "BABELTRACE CONFIGURATION"
+    )]
+    pub merge_stream_id: Option<u64>,
 }

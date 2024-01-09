@@ -42,6 +42,7 @@ These sections are the same for each of the plugins.
   - `run-id` — Use the provided UUID as the run ID instead of generating a random one.
   - `trace-uuid` — Use the provided UUID as the trace UUID to override any present (or not) UUID contained in the CTF metadata.
   - `log-level` — Logging level for libbabeltrace. Defaults to `none`.
+  - `merge-stream-id` — Merge all streams into the stream with the given ID, producing a single timeline.
 
 ### Importer Section
 

@@ -160,6 +160,12 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
         warn!("The CTF containing input path(s) don't contain any trace data");
     }
 
+    if let Some(stream_id) = cfg.plugin.merge_stream_id {
+        if !props.streams.contains_key(&stream_id) {
+            return Err(modality_ctf::error::Error::MergeStreamIdNotFound.into());
+        }
+    }
+
     let mut additional_timeline_attributes = Vec::with_capacity(
         cfg.ingest
             .timeline_attributes
@@ -177,6 +183,15 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
                 .interned_timeline_key(TimelineAttrKey::Custom(kv.0.to_string()))
                 .await?,
             kv.1.clone(),
+        ));
+    }
+
+    if let Some(stream_id) = cfg.plugin.merge_stream_id {
+        additional_timeline_attributes.push((
+            client
+                .interned_timeline_key(TimelineAttrKey::MergeStreamId)
+                .await?,
+            modality_api::BigInt::new_attr_val(stream_id.into()),
         ));
     }
 
@@ -200,7 +215,13 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
-    for (tid, attr_kvs) in props.timelines() {
+    for (stream_id, tid, attr_kvs) in props.timelines() {
+        if let Some(merge_stream_id) = cfg.plugin.merge_stream_id {
+            if stream_id != merge_stream_id {
+                continue;
+            }
+        }
+
         let mut attrs = HashMap::new();
         for (k, v) in attr_kvs
             .into_iter()
@@ -221,7 +242,13 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let event = maybe_event?;
 
-        let timeline_id = match props.streams.get(&event.stream_id).map(|s| s.timeline_id()) {
+        let event_stream_id = if let Some(merge_stream_id) = cfg.plugin.merge_stream_id {
+            merge_stream_id
+        } else {
+            event.stream_id
+        };
+
+        let timeline_id = match props.streams.get(&event_stream_id).map(|s| s.timeline_id()) {
             Some(tid) => tid,
             None => {
                 warn!(

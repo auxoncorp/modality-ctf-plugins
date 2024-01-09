@@ -53,6 +53,9 @@ pub enum TimelineAttrKey {
     #[display(fmt = "timeline.internal.ctf.stream.clock.uuid")]
     StreamClockUuid,
 
+    #[display(fmt = "timeline.internal.config.merge_stream_id")]
+    MergeStreamId,
+
     #[display(fmt = "timeline.{_0}")]
     Custom(String),
 }

@@ -44,11 +44,11 @@ pub struct Opts {
     pub session_not_found_action: Option<SessionNotFoundAction>,
 
     /// Rename a timeline attribute key as it is being imported. Specify as 'original_key,new_key'
-    #[clap(long, name = "original,new", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
+    #[clap(long, name = "original.tl.attr,new.tl.attr", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
     pub rename_timeline_attr: Vec<AttrKeyRename>,
 
     /// Rename an event attribute key as it is being imported. Specify as 'original_key,new_key'
-    #[clap(long, name = "original,new", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
+    #[clap(long, name = "original.event.attr,new.event.attr", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
     pub rename_event_attr: Vec<AttrKeyRename>,
 
     /// The URL to connect to the LTTng relay daemon.
@@ -242,6 +242,12 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
+    if let Some(stream_id) = cfg.plugin.merge_stream_id {
+        if !props.streams.contains_key(&stream_id) {
+            return Err(modality_ctf::error::Error::MergeStreamIdNotFound.into());
+        }
+    }
+
     let mut last_timeline_ordering_val: HashMap<TimelineId, u128> = Default::default();
 
     let mut additional_timeline_attributes = Vec::with_capacity(
@@ -261,6 +267,15 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
                 .interned_timeline_key(TimelineAttrKey::Custom(kv.0.to_string()))
                 .await?,
             kv.1.clone(),
+        ));
+    }
+
+    if let Some(stream_id) = cfg.plugin.merge_stream_id {
+        additional_timeline_attributes.push((
+            client
+                .interned_timeline_key(TimelineAttrKey::MergeStreamId)
+                .await?,
+            modality_api::BigInt::new_attr_val(stream_id.into()),
         ));
     }
 
@@ -284,7 +299,13 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
         ));
     }
 
-    for (tid, attr_kvs) in props.timelines() {
+    for (stream_id, tid, attr_kvs) in props.timelines() {
+        if let Some(merge_stream_id) = cfg.plugin.merge_stream_id {
+            if stream_id != merge_stream_id {
+                continue;
+            }
+        }
+
         let mut attrs = HashMap::new();
         for (k, v) in attr_kvs
             .into_iter()
@@ -319,7 +340,13 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
                 break;
             }
 
-            let timeline_id = match props.streams.get(&event.stream_id).map(|s| s.timeline_id()) {
+            let event_stream_id = if let Some(merge_stream_id) = cfg.plugin.merge_stream_id {
+                merge_stream_id
+            } else {
+                event.stream_id
+            };
+
+            let timeline_id = match props.streams.get(&event_stream_id).map(|s| s.timeline_id()) {
                 Some(tid) => tid,
                 None => {
                     warn!(

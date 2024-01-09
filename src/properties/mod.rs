@@ -47,12 +47,13 @@ impl CtfProperties {
     #[allow(clippy::type_complexity)]
     pub fn timelines(
         &self,
-    ) -> Box<dyn Iterator<Item = (TimelineId, Vec<(InternedAttrKey, AttrVal)>)> + '_> {
+    ) -> Box<dyn Iterator<Item = (StreamId, TimelineId, Vec<(InternedAttrKey, AttrVal)>)> + '_>
+    {
         let trace_attr_kvs = self.trace.attr_kvs();
-        Box::new(self.streams.values().map(move |p| {
+        Box::new(self.streams.iter().map(move |(stream_id, p)| {
             let mut attr_kvs = p.attr_kvs();
             attr_kvs.extend_from_slice(&trace_attr_kvs);
-            (p.timeline_id(), attr_kvs)
+            (*stream_id, p.timeline_id(), attr_kvs)
         }))
     }
 }

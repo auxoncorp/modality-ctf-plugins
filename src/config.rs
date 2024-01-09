@@ -39,6 +39,9 @@ pub struct PluginConfig {
     /// Rename an event attribute key as it is being imported
     pub rename_event_attrs: Vec<AttrKeyRename>,
 
+    /// Merge all streams into the stream with the given ID, producing a single timeline.
+    pub merge_stream_id: Option<u64>,
+
     #[serde(flatten)]
     pub import: ImportConfig,
 
@@ -122,6 +125,7 @@ impl CtfConfig {
             lttng_live: plugin_cfg.lttng_live,
             rename_timeline_attrs: plugin_cfg.rename_timeline_attrs,
             rename_event_attrs: plugin_cfg.rename_event_attrs,
+            merge_stream_id: bt_opts.merge_stream_id.or(plugin_cfg.merge_stream_id),
         };
 
         Ok(Self {
@@ -271,6 +275,7 @@ url = 'net://localhost/host/ubuntu-focal/my-kernel-session'
                     log_level: babeltrace2_sys::LoggingLevel::Info.into(),
                     rename_timeline_attrs: Default::default(),
                     rename_event_attrs: Default::default(),
+                    merge_stream_id: None,
                     import: ImportConfig {
                         trace_name: "my-trace".to_owned().into(),
                         clock_class_offset_ns: Some(-1_i64),
@@ -342,6 +347,7 @@ url = 'net://localhost/host/ubuntu-focal/my-kernel-session'
                     import: Default::default(),
                     rename_timeline_attrs: Default::default(),
                     rename_event_attrs: Default::default(),
+                    merge_stream_id: None,
                     lttng_live: LttngLiveConfig {
                         retry_duration_us: 100.into(),
                         session_not_found_action: babeltrace2_sys::SessionNotFoundAction::End

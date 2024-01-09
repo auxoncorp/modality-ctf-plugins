@@ -21,4 +21,7 @@ pub enum Error {
         "Event attribute key prefix cannot start or end with the reserved delimeter '.' character"
     )]
     InvalidAttrKeyPrefix,
+
+    #[error("The available stream properties doesn't contain a stream ID matching the provided merge-stream-id")]
+    MergeStreamIdNotFound,
 }
