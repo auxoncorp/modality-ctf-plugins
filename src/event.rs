@@ -17,10 +17,26 @@ impl CtfEvent {
     pub async fn new(event: &OwnedEvent, client: &mut Client) -> Result<Self, Error> {
         let mut attrs = HashMap::new();
 
-        if let Some(n) = event.class_properties.name.as_ref() {
+        let mut is_reserved_event = false;
+        if let Some(n) = event.class_properties.name.as_deref() {
+            // Convert the well-known modality event names from their C-identifier-like names
+            let (event_name, reserved_event) = match n {
+                "modality_mutator_announced" => ("modality.mutator.announced", true),
+                "modality_mutator_retired" => ("modality.mutator.retired", true),
+                "modality_mutation_command_communicated" => {
+                    ("modality.mutation.command_communicated", true)
+                }
+                "modality_mutation_clear_communicated" => {
+                    ("modality.mutation.clear_communicated", true)
+                }
+                "modality_mutation_triggered" => ("modality.mutation.triggered", true),
+                "modality_mutation_injected" => ("modality.mutation.injected", true),
+                _ => (n, false),
+            };
+            is_reserved_event = reserved_event;
             attrs.insert(
                 client.interned_event_key(EventAttrKey::Name).await?,
-                n.to_owned().into(),
+                event_name.to_owned().into(),
             );
         }
 
@@ -66,7 +82,7 @@ impl CtfEvent {
             .properties
             .common_context
             .as_ref()
-            .map(|f| field_to_attr(false, EMPTY_PREFIX, f))
+            .map(|f| field_to_attr(f, EMPTY_PREFIX, false, false))
             .transpose()?
             .unwrap_or_default();
         for (k, v) in common_context.into_iter() {
@@ -82,7 +98,7 @@ impl CtfEvent {
             .properties
             .specific_context
             .as_ref()
-            .map(|f| field_to_attr(false, EMPTY_PREFIX, f))
+            .map(|f| field_to_attr(f, EMPTY_PREFIX, false, false))
             .transpose()?
             .unwrap_or_default();
         for (k, v) in specific_context.into_iter() {
@@ -98,7 +114,7 @@ impl CtfEvent {
             .properties
             .packet_context
             .as_ref()
-            .map(|f| field_to_attr(false, EMPTY_PREFIX, f))
+            .map(|f| field_to_attr(f, EMPTY_PREFIX, false, false))
             .transpose()?
             .unwrap_or_default();
         for (k, v) in packet_context.into_iter() {
@@ -114,7 +130,14 @@ impl CtfEvent {
             .properties
             .payload
             .as_ref()
-            .map(|f| field_to_attr(true, EMPTY_PREFIX, f))
+            .map(|f| {
+                field_to_attr(
+                    f,
+                    EMPTY_PREFIX,
+                    true, // auto_map_interaction_fields,
+                    is_reserved_event,
+                )
+            })
             .transpose()?
             .unwrap_or_default();
         for (k, v) in event_fields.into_iter() {
@@ -136,39 +159,43 @@ impl CtfEvent {
 
 /// Yields a map of <'<prefix>.<possibly.nested.key>', AttrVal>
 fn field_to_attr(
-    auto_map_interaction_fields: bool,
-    prefix: &str,
     f: &OwnedField,
+    prefix: &str,
+    auto_map_interaction_fields: bool,
+    is_reserved_event: bool,
 ) -> Result<HashMap<AttrKey, AttrVal>, Error> {
-    let gen = FieldToAttrKeysGen::new(prefix)?
-        .with_auto_map_interaction_fields(auto_map_interaction_fields);
+    let gen = FieldToAttrKeysGen::new(prefix, auto_map_interaction_fields, is_reserved_event)?;
     Ok(gen.generate(f))
 }
 
 #[derive(Debug)]
 struct FieldToAttrKeysGen {
-    // A stack of indices for each nested structure.
-    // We use this to name fields that did not come with a name
-    // since it's allowed in the spec, although unlikely in the wild.
-    // Invariant: len is always >= 1 for the root structure
+    /// A stack of indices for each nested structure.
+    /// We use this to name fields that did not come with a name
+    /// since it's allowed in the spec, although unlikely in the wild.
+    /// Invariant: len is always >= 1 for the root structure
     anonymous_field_idices_per_nesting_depth: Vec<usize>,
 
-    // A stack of attr key components built from the field names.
-    // A stack so we can push/pop as we encounter nested structures
-    // mixed inbetween parent container fields.
-    // Invariant: len is always >= 1 for the root structure's key_prefix
-    // Invariant: none of the entries should contain a '.' character
-    //   We're certain ctf-plugins/babeltrace won't produce field names with that character because
-    //   it's not allowed by the spec (must be valid C identifiers)
+    /// A stack of attr key components built from the field names.
+    /// A stack so we can push/pop as we encounter nested structures
+    /// mixed inbetween parent container fields.
+    /// Invariant: len is always >= 1 for the root structure's key_prefix
+    /// Invariant: none of the entries should contain a '.' character
+    ///   We're certain ctf-plugins/babeltrace won't produce field names with that character because
+    ///   it's not allowed by the spec (must be valid C identifiers)
     attr_key_stack: Vec<String>,
 
     root_struct_observed: bool,
 
-    // Whether or not to auto map root-level interaction fields to be
-    // an artificial '.interaction.' structure.
-    // These elevates the producer from having to nest an interaction struct in their data
-    // which is impossible in some cases/implementations
+    /// Whether or not to auto map root-level interaction fields to be
+    /// an artificial '.interaction.' structure.
+    /// These elevates the producer from having to nest an interaction struct in their data
+    /// which is impossible in some cases/implementations
     auto_map_interaction_fields: bool,
+
+    /// True if this is for a modality reserved event.
+    /// We'll consider more attr key/val transformations if so.
+    is_reserved_event: bool,
 
     attrs: HashMap<AttrKey, AttrVal>,
 }
@@ -176,7 +203,11 @@ struct FieldToAttrKeysGen {
 impl FieldToAttrKeysGen {
     /// Invariant: key_prefix must not end in a '.', this util will handle that based
     /// on compound or singular scalar types
-    fn new(key_prefix: &str) -> std::result::Result<Self, Error> {
+    fn new(
+        key_prefix: &str,
+        auto_map_interaction_fields: bool,
+        is_reserved_event: bool,
+    ) -> std::result::Result<Self, Error> {
         if key_prefix.starts_with('.') || key_prefix.ends_with('.') {
             Err(Error::InvalidAttrKeyPrefix)
         } else {
@@ -184,15 +215,11 @@ impl FieldToAttrKeysGen {
                 anonymous_field_idices_per_nesting_depth: vec![0],
                 attr_key_stack: vec![key_prefix.to_string()],
                 root_struct_observed: false,
-                auto_map_interaction_fields: false,
+                auto_map_interaction_fields,
+                is_reserved_event,
                 attrs: Default::default(),
             })
         }
-    }
-
-    fn with_auto_map_interaction_fields(mut self, auto_map_interaction_fields: bool) -> Self {
-        self.auto_map_interaction_fields = auto_map_interaction_fields;
-        self
     }
 
     /// Destructure the contents of `root_field`
@@ -247,13 +274,13 @@ impl FieldToAttrKeysGen {
                 }),
             _ => {
                 if self.auto_map_interaction_fields {
-                    if InteractionRemoteAttrKey::TimelineId.matches_key(&k) {
+                    if ReservedAttrKey::TimelineId.matches_key(&k) {
                         if let ScalarField::String(tid) = s {
                             match tid.parse::<Uuid>() {
                                 Ok(tid) => {
                                     return
                                         ScalarFieldAttrKeyVal::Single((AttrKey::new(
-                                                    InteractionRemoteAttrKey::TimelineId.to_interaction_remote_key()
+                                                    ReservedAttrKey::TimelineId.to_modality_key()
                                                     .to_string()), AttrVal::TimelineId(Box::new(tid.into()))))
                                 }
                                 Err(e) => warn!("Failed to auto map interaction field as timeline ID UUID type. {e}"),
@@ -261,13 +288,13 @@ impl FieldToAttrKeysGen {
                         } else {
                             warn!("Mapping interaction remote timeline ID requires a string type");
                         }
-                    } else if InteractionRemoteAttrKey::LogicalTime.matches_key(&k) {
+                    } else if ReservedAttrKey::LogicalTime.matches_key(&k) {
                         if let ScalarField::String(t) = s {
                             match t.parse::<LogicalTime>() {
                                 Ok(t) => {
                                     return
                                         ScalarFieldAttrKeyVal::Single((AttrKey::new(
-                                                    InteractionRemoteAttrKey::LogicalTime.to_interaction_remote_key()
+                                                    ReservedAttrKey::LogicalTime.to_modality_key()
                                                     .to_string()), AttrVal::LogicalTime(t)))
                                 }
                                 Err(e) => warn!("Failed to auto map interaction field as timeline ID UUID type. {e:?}"),
@@ -275,28 +302,73 @@ impl FieldToAttrKeysGen {
                         } else {
                             warn!("Mapping interaction remote logical time requires a string type");
                         }
-                    } else if InteractionRemoteAttrKey::Timestamp.matches_key(&k) {
+                    } else if ReservedAttrKey::Timestamp.matches_key(&k) {
                         if let ScalarField::UnsignedInteger(t) = s {
                             return ScalarFieldAttrKeyVal::Single((
                                 AttrKey::new(
-                                    InteractionRemoteAttrKey::Timestamp
-                                        .to_interaction_remote_key()
-                                        .to_string(),
+                                    ReservedAttrKey::Timestamp.to_modality_key().to_string(),
                                 ),
                                 AttrVal::Timestamp((*t).into()),
                             ));
                         } else {
                             warn!("Mapping interaction remote timestamp requires a u64 type");
                         }
-                    } else if InteractionRemoteAttrKey::Nonce.matches_key(&k) {
+                    } else if ReservedAttrKey::Nonce.matches_key(&k) {
                         return ScalarFieldAttrKeyVal::Single((
-                            AttrKey::new(
-                                InteractionRemoteAttrKey::Nonce
-                                    .to_interaction_remote_key()
-                                    .to_string(),
-                            ),
+                            AttrKey::new(ReservedAttrKey::Nonce.to_modality_key().to_string()),
                             scalar_field_to_val(s),
                         ));
+                    }
+                }
+
+                if self.is_reserved_event {
+                    if ReservedAttrKey::MutatorId.matches_key(&k) {
+                        if let ScalarField::String(id) = s {
+                            match id.parse::<Uuid>() {
+                                Ok(id) => {
+                                    return
+                                        ScalarFieldAttrKeyVal::Single((AttrKey::new(
+                                                    ReservedAttrKey::MutatorId.to_modality_key()
+                                                    .to_string()), uuid_to_integer_attr_val(&id) ))
+                                }
+                                Err(e) => warn!("Failed to auto map reserved field as mutator ID UUID type. {e}"),
+                            }
+                        } else {
+                            warn!("Mapping reserved mutator ID requires a string type");
+                        }
+                    } else if ReservedAttrKey::MutationId.matches_key(&k) {
+                        if let ScalarField::String(id) = s {
+                            match id.parse::<Uuid>() {
+                                Ok(id) => {
+                                    return
+                                        ScalarFieldAttrKeyVal::Single((AttrKey::new(
+                                                    ReservedAttrKey::MutationId.to_modality_key()
+                                                    .to_string()), uuid_to_integer_attr_val(&id) ))
+                                }
+                                Err(e) => warn!("Failed to auto map reserved field as mutation ID UUID type. {e}"),
+                            }
+                        } else {
+                            warn!("Mapping reserved mutation ID requires a string type");
+                        }
+                    } else if ReservedAttrKey::MutationSuccess.matches_key(&k) {
+                        let maybe_success = match s {
+                            ScalarField::Bool(val) => Some(*val),
+                            ScalarField::UnsignedInteger(val) => Some(*val != 0),
+                            ScalarField::SignedInteger(val) => Some(*val != 0),
+                            _ => None,
+                        };
+                        if let Some(success) = maybe_success {
+                            return ScalarFieldAttrKeyVal::Single((
+                                AttrKey::new(
+                                    ReservedAttrKey::MutationSuccess
+                                        .to_modality_key()
+                                        .to_string(),
+                                ),
+                                success.into(),
+                            ));
+                        } else {
+                            warn!("Mapping reserved mutation success requires a boolean or integer type");
+                        }
                     }
                 }
 
@@ -405,37 +477,50 @@ fn scalar_field_to_val(s: &ScalarField) -> AttrVal {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
-enum InteractionRemoteAttrKey {
+enum ReservedAttrKey {
     TimelineId,
     LogicalTime,
     Timestamp,
     Nonce,
+    MutatorId,
+    MutationId,
+    MutationSuccess,
 }
 
-impl InteractionRemoteAttrKey {
+impl ReservedAttrKey {
     fn matches_key(self, k: &str) -> bool {
-        !k.contains(self.to_interaction_remote_key()) && k.contains(self.to_remote_key())
+        !k.contains(self.to_modality_key()) && k.contains(self.to_ctf_key())
     }
 
-    fn to_remote_key(self) -> &'static str {
-        use InteractionRemoteAttrKey::*;
+    fn to_ctf_key(self) -> &'static str {
+        use ReservedAttrKey::*;
         match self {
             TimelineId => "remote_timeline_id",
             LogicalTime => "remote_logical_time",
             Timestamp => "remote_timestamp",
             Nonce => "remote_nonce",
+            MutatorId => "mutator_id",
+            MutationId => "mutation_id",
+            MutationSuccess => "mutation_success",
         }
     }
 
-    fn to_interaction_remote_key(self) -> &'static str {
-        use InteractionRemoteAttrKey::*;
+    fn to_modality_key(self) -> &'static str {
+        use ReservedAttrKey::*;
         match self {
             TimelineId => "interaction.remote_timeline_id",
             LogicalTime => "interaction.remote_logical_time",
             Timestamp => "interaction.remote_timestamp",
             Nonce => "interaction.remote_nonce",
+            MutatorId => "mutator.id",
+            MutationId => "mutation.id",
+            MutationSuccess => "mutation.success",
         }
     }
+}
+
+fn uuid_to_integer_attr_val(u: &Uuid) -> AttrVal {
+    i128::from_le_bytes(*u.as_bytes()).into()
 }
 
 #[cfg(test)]
@@ -494,6 +579,15 @@ mod tests {
                     String("d1118896-314e-45f0-ae50-18a38786d957".to_string()),
                 ),
                 Scalar("remote_nonce".to_string().into(), UnsignedInteger(8)),
+                Scalar(
+                    "mutator_id".to_string().into(),
+                    String("d1118891-314e-45f0-ae50-18a38786d957".to_string()),
+                ),
+                Scalar(
+                    "mutation_id".to_string().into(),
+                    String("d1118892-314e-45f0-ae50-18a38786d957".to_string()),
+                ),
+                Scalar("mutation_success".to_string().into(), UnsignedInteger(1)),
             ],
         )
     }
@@ -501,9 +595,7 @@ mod tests {
     #[test]
     fn attr_key_gen_mixed_nested_structs() {
         let root = messy_event_structure();
-        let gen = FieldToAttrKeysGen::new("some.prefix")
-            .unwrap()
-            .with_auto_map_interaction_fields(true);
+        let gen = FieldToAttrKeysGen::new("some.prefix", true, true).unwrap();
         let mut attrs = gen.generate(&root).into_iter().collect::<Vec<(_, _)>>();
         attrs.sort_by(|a, b| a.0.as_ref().cmp(b.0.as_ref()));
         assert_eq!(
@@ -521,6 +613,15 @@ mod tests {
                             .unwrap()
                             .into()
                     )),
+                ),
+                (
+                    AttrKey::new("mutation.id".to_owned()),
+                    BigInt::new_attr_val(116772292640754019124460142024662192593)
+                ),
+                (AttrKey::new("mutation.success".to_owned()), true.into()),
+                (
+                    AttrKey::new("mutator.id".to_owned()),
+                    BigInt::new_attr_val(116772292640754019124460142024645415377)
                 ),
                 (
                     AttrKey::new("some.prefix.anonymous_0".to_owned()),
@@ -573,7 +674,7 @@ mod tests {
 
     #[test]
     fn attr_key_gen_smoke() {
-        assert!(FieldToAttrKeysGen::new(".asdf").is_err());
-        assert!(FieldToAttrKeysGen::new("asdf.").is_err());
+        assert!(FieldToAttrKeysGen::new(".asdf", false, false).is_err());
+        assert!(FieldToAttrKeysGen::new("asdf.", false, false).is_err());
     }
 }
