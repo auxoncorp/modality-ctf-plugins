@@ -55,6 +55,8 @@ jobs:
         run: |
           sudo apt update
           sudo apt-get install -y flex bison m4 gettext autotools-dev build-essential libglib2.0-dev
+          sudo apt-get install --no-install-recommends --assume-yes patchelf gzip cmake make gcc g++ build-essential
+          sudo apt-get install --no-install-recommends --assume-yes libssl-dev libglib2.0-dev pkg-config libtool flex bison autoconf automake
 
       - name: Checkout
         uses: actions/checkout@v2
