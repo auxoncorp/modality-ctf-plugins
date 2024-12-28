@@ -3,7 +3,7 @@
 use babeltrace2_sys::{CtfIterator, CtfPluginSourceFsInitParams};
 use clap::Parser;
 use modality_api::types::TimelineId;
-use modality_ctf::config::AttrKeyRename;
+use modality_ctf::config::{AttrKeyRename, StreamRename};
 use modality_ctf::{prelude::*, tracing::try_init_tracing_subscriber};
 use modality_ingest_client::IngestClient;
 use std::collections::HashMap;
@@ -46,6 +46,10 @@ pub struct Opts {
     #[clap(long, name = "original.event.attr,new.event.attr", help_heading = "IMPORT CONFIGURATION", value_parser = parse_attr_key_rename)]
     pub rename_event_attr: Vec<AttrKeyRename>,
 
+    /// Rename a stream as it is being imported. Specify as 'stream_id,name'
+    #[clap(long, name = "stream_id,stream_name", help_heading = "IMPORT CONFIGURATION", value_parser = parse_stream_rename)]
+    pub rename_streams: Vec<StreamRename>,
+
     /// Path to trace directories
     #[clap(name = "input", help_heading = "IMPORT CONFIGURATION")]
     pub inputs: Vec<PathBuf>,
@@ -60,6 +64,20 @@ fn parse_attr_key_rename(
     let original = s[..pos].parse()?;
     let new = s[pos + 1..].parse()?;
     Ok(AttrKeyRename { original, new })
+}
+
+fn parse_stream_rename(
+    s: &str,
+) -> Result<StreamRename, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let pos = s
+        .find(',')
+        .ok_or_else(|| format!("invalid stream_id,name: no `,` found in `{s}`"))?;
+    let stream_id = s[..pos].parse()?;
+    let stream_name = s[pos + 1..].parse()?;
+    Ok(StreamRename {
+        stream_id,
+        stream_name,
+    })
 }
 
 #[derive(Debug, Error)]
@@ -116,6 +134,9 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(ue) = opts.force_clock_class_origin_unix_epoch {
         cfg.plugin.import.force_clock_class_origin_unix_epoch = ue.into();
     }
+    if !opts.rename_streams.is_empty() {
+        cfg.plugin.rename_streams = opts.rename_streams;
+    }
     if !opts.inputs.is_empty() {
         cfg.plugin.import.inputs = opts.inputs;
     }
@@ -148,6 +169,7 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
     let props = CtfProperties::new(
         cfg.plugin.run_id,
         cfg.plugin.trace_uuid,
+        &cfg.plugin.rename_streams,
         trace_iter.trace_properties(),
         trace_iter.stream_properties(),
         &mut client,

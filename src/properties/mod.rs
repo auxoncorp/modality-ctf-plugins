@@ -1,4 +1,5 @@
 use crate::client::Client;
+use crate::config::StreamRename;
 use crate::error::Error;
 use babeltrace2_sys::{StreamId, StreamProperties, TraceProperties};
 use modality_api::{AttrVal, TimelineId};
@@ -22,10 +23,16 @@ impl CtfProperties {
     pub async fn new(
         run_id: Option<Uuid>,
         trace_uuid_override: Option<Uuid>,
+        stream_renames: &[StreamRename],
         t: &TraceProperties,
         s: &BTreeSet<StreamProperties>,
         client: &mut Client,
     ) -> Result<Self, Error> {
+        let stream_renames: BTreeMap<_, _> = stream_renames
+            .iter()
+            .map(|s| (s.stream_id, s.stream_name.clone()))
+            .collect();
+
         // TimelineIds are a composite of the trace UUID and the stream ID
         // Use the override if present, otherwise use the trace's UUID
         // Fallback to making a new random UUID
@@ -38,7 +45,13 @@ impl CtfProperties {
         for stream in s.iter() {
             streams.insert(
                 stream.id,
-                CtfStreamProperties::new(&trace_uuid, stream, client).await?,
+                CtfStreamProperties::new(
+                    &trace_uuid,
+                    stream_renames.get(&stream.id).as_deref(),
+                    stream,
+                    client,
+                )
+                .await?,
             );
         }
         Ok(Self { trace, streams })

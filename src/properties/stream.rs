@@ -20,6 +20,7 @@ pub struct CtfStreamProperties {
 impl CtfStreamProperties {
     pub async fn new(
         trace_uuid: &Uuid,
+        rename: Option<&String>,
         s: &StreamProperties,
         client: &mut Client,
     ) -> Result<Self, Error> {
@@ -41,10 +42,12 @@ impl CtfStreamProperties {
                 None
             }
         });
-        let stream_name = stream_name_from_path
+        let default_stream_name = stream_name_from_path
             .map(|s| s.to_string())
             .or_else(|| s.name.clone())
             .unwrap_or_else(|| format!("stream{}", s.id));
+
+        let stream_name = rename.map(|s| s.to_string()).unwrap_or(default_stream_name);
 
         attrs.insert(
             client

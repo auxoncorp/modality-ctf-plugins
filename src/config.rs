@@ -39,6 +39,9 @@ pub struct PluginConfig {
     /// Rename an event attribute key as it is being imported
     pub rename_event_attrs: Vec<AttrKeyRename>,
 
+    /// Rename a stream as it is being imported
+    pub rename_streams: Vec<StreamRename>,
+
     /// Merge all streams into the stream with the given ID, producing a single timeline.
     pub merge_stream_id: Option<u64>,
 
@@ -57,6 +60,16 @@ pub struct AttrKeyRename {
 
     /// The new attr key name to use
     pub new: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct StreamRename {
+    /// The stream ID
+    pub stream_id: u64,
+
+    /// The stream name
+    pub stream_name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Default, Deserialize)]
@@ -125,6 +138,7 @@ impl CtfConfig {
             lttng_live: plugin_cfg.lttng_live,
             rename_timeline_attrs: plugin_cfg.rename_timeline_attrs,
             rename_event_attrs: plugin_cfg.rename_event_attrs,
+            rename_streams: plugin_cfg.rename_streams,
             merge_stream_id: bt_opts.merge_stream_id.or(plugin_cfg.merge_stream_id),
         };
 

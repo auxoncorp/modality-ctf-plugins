@@ -236,6 +236,7 @@ async fn do_main() -> Result<(), Box<dyn std::error::Error>> {
     let props = CtfProperties::new(
         cfg.plugin.run_id,
         cfg.plugin.trace_uuid,
+        &cfg.plugin.rename_streams,
         ctf_stream.trace_properties(),
         ctf_stream.stream_properties(),
         &mut client,
